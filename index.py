@@ -1,55 +1,56 @@
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
+# Name: Jan Smith  
+# EUID: js2019
+# Student ID: 11536897
+# Course: CSCE 3550
+
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 from urllib.parse import urlparse, parse_qs
+import datetime
+import sqlite3
 import base64
 import json
 import jwt
-import datetime
-import sqlite3
-import os
 
 hostName = "localhost"
 serverPort = 8080
 
-# For easier readability
+# Database file
 db_file = "totally_not_my_privateKeys.db"
 
-# Initialize Database
+# Connect to DB and create a table
 db = sqlite3.connect(db_file)
-db.execute(''' 
-    CREATE TABLE IF NOT EXISTS keys (
-        kid INTEGER PRIMARY KEY AUTOINCREMENT,
-        key BLOB NOT NULL,
-        exp INTEGER NOT NULL
-    ) 
-    ''')
-    
-# Keep using the private and expired keys provided
+db.execute(
+    '''CREATE TABLE IF NOT EXISTS keys(
+            kid INTEGER PRIMARY KEY AUTOINCREMENT,
+            key BLOB NOT NULL,
+            exp INTEGER NOT NULL)''')
+
+# Re-using given code for key generation
 private_key = rsa.generate_private_key(
-    public_exponent = 65537,
-    key_size = 2048,
+    public_exponent=65537,
+    key_size=2048,
 )
 
 expired_key = rsa.generate_private_key(
-    public_exponent = 65537,
-    key_size = 2048,
+    public_exponent=65537,
+    key_size=2048,
 )
 
 pem = private_key.private_bytes(
-    encoding = serialization.Encoding.PEM,
-    format = serialization.PrivateFormat.TraditionalOpenSSL,
-    encryption_algorithm = serialization.NoEncryption()
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
+    encryption_algorithm=serialization.NoEncryption()
 )
 
 expired_pem = expired_key.private_bytes(
-    encoding = serialization.Encoding.PEM,
-    format = serialization.PrivateFormat.TraditionalOpenSSL,
-    encryption_algorithm = serialization.NoEncryption()
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
+    encryption_algorithm=serialization.NoEncryption()
 )
 
-# Keep using the conversion provided
+# Re-using code for integer conversion to Base64URL
 def int_to_base64(value):
     """Convert an integer to a Base64URL-encoded string"""
     value_hex = format(value, 'x')
@@ -60,96 +61,83 @@ def int_to_base64(value):
     encoded = base64.urlsafe_b64encode(value_bytes).rstrip(b'=')
     return encoded.decode('utf-8')
 
-# Insert a key into the DB    
-def store_key(priv_key_pem, exp):
-    with db:
-        db.execute("INSERT INTO keys (key, exp) VALUES (?, ?)", (priv_key_pem, exp))  
+numbers = private_key.private_numbers()
 
-# Retrieve key from DB    
-def get_keys(expired=False):
+# Save the keys to DB
+def store_key(k_pem, exp):
     with db:
-        if expired: # If key expired
-            result = db.execute("SELECT (key, exp) FROM keys WHERE exp <= ?", (int(datetime.datetime.now(datetime.UTC).timestamp()),))
-        else:       # Otherwise
-            result = db.execute("SELECT (key, exp) FROM keys WHERE exp > ?", (int(datetime.datetime.now(datetime.UTC).timestamp()),))
+        db.execute("INSERT INTO keys (key, exp) VALUES (?, ?)", (k_pem, exp))
         
-        rows = result.fetchall()  
-        return rows    
-
-# Save valid private key to the DB
-store_key(pem.decode(), int((datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=2)).timestamp())) 
-
-# Save an expired key by 1 day
-store_key(expired_pem.decode(), int((datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)).timestamp()))
-
-def check_db_contents():
+# Function to get a key from the database (expired or valid)
+def get_key(expired=False):
     with db:
-        result = db.execute("SELECT kid, exp FROM keys")
-        rows = result.fetchall()
-        print("Database contents:")
-        for row in rows:
-            exp_time = datetime.datetime.utcfromtimestamp(row[1]).strftime('%Y-%m-%d %H:%M:%S')
-            print(f"KID: {row[0]}, Exp: {exp_time}")
+        if expired:
+            result = db.execute("SELECT key, exp FROM keys WHERE exp <= ?", (int(datetime.datetime.now(datetime.UTC).timestamp()),))
+        else:
+            result = db.execute("SELECT key, exp FROM keys WHERE exp > ?", (int(datetime.datetime.now(datetime.UTC).timestamp()),))
+             
+        row = result.fetchone()
+         
+        return row
+    
+# Store valid key
+store_key(pem.decode(), int((datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1)).timestamp()))  
 
-# Debugging: Check the database contents after saving keys
-check_db_contents()
+# Store expired key (by 5 hours)
+store_key(expired_pem.decode(), int((datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=5)).timestamp()))    
 
+# HTTP Server logic remains unchanged
 class MyServer(BaseHTTPRequestHandler):
-    
+    # For unsupported methods --> Key Not Found 
     def not_supported_methods(self):
-        self.send_response(405)
+        self.send_response(404)
         self.end_headers()
-        return
     
-    # To simplify unused methods
-    do_PUT = do_HEAD = do_DELETE = do_PATCH = not_supported_methods
-    
+    # Simplificaiton for unused methods          
+    do_PUT = do_DELETE = do_HEAD = do_PATCH = not_supported_methods
+
     # POST Request (/auth)
     def do_POST(self):
         parsed_path = urlparse(self.path)
         params = parse_qs(parsed_path.query)
-            
+
         if parsed_path.path == "/auth":
-            exp = 'expired' in params      
-            rows = get_keys(exp) # Get all valid or expired keys
-                
-            if rows:
-                # Get the first key
-                key = rows[0]
-                key_pem = key[0]    
-                
-                headers = {
-                    "kid": "expiredKID" if exp else "goodKid"
-                }
+            exp = 'expired' in params
+            row = get_key(exp)            
+
+            if row:
+                key_pem = row[0]      # Index 0 is pem, Index 1 is exp
+                headers = {"kid": "expiredKID" if exp else "goodKID"}
+
                 token_payload = {
                     "user": "username",
-                    "exp": datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=-1) if exp else    # If expired
-                        datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1)                    # If Valid
-                } 
-                
-                encoded_jwt = jwt.encode(token_payload, key_pem, algorithm  = "RS256", headers=headers)
+                    "exp": datetime.datetime.now(datetime.UTC) + (datetime.timedelta(hours=-2) if exp else datetime.timedelta(hours=2))
+                }
+
+                encoded_jwt = jwt.encode(token_payload, key_pem.encode(), algorithm = "RS256", headers = headers)
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(bytes(encoded_jwt, "utf-8"))
             else:
                 self.not_supported_methods() # Key not found
-                
         return
 
-    # GET Request: /.well-known/jwks.json
+    #GET Request (/.well-known/jwks.json)
     def do_GET(self):
         if self.path == "/.well-known/jwks.json":
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-           
-            # Get valid keys 
-            rows = get_keys(False)
-            keys = {"keys": []}
-            
-            for row in rows:
-                priv_key = load_pem_private_key(row[1], password=None)
-                numbers = priv_key.private_numbers()
+
+            # Get valid key 
+            valid_key = get_key(False)              
+            jwks = {"keys": []}  #Key Set
+
+            if valid_key:
+                key_pem = valid_key[0]
+                key = serialization.load_pem_private_key(key_pem.encode(), password = None)
+
+                numbers = key.private_numbers()
                 
                 jwk = {
                     "alg": "RS256",
@@ -160,26 +148,27 @@ class MyServer(BaseHTTPRequestHandler):
                     "e": int_to_base64(numbers.public_numbers.e),
                 }
                 
-                keys["keys"].append(jwk)
-                self.wfile.write(bytes(json.dumps(keys).encode(), "utf-8"))
+                jwks["keys"].append(jwk)
+
+            self.wfile.write(bytes(json.dumps(jwks), "utf-8"))
         else:
-            self.not_supported_methods()
-                
+            self.not_supported_methods() # Not found
+            
         return
 
-# Keep server running until interruption occurs. 
+print("Starting server on port 8080!")
+
 if __name__ == "__main__":
     webServer = HTTPServer((hostName, serverPort), MyServer)
+    
     try:
         webServer.serve_forever()
     except KeyboardInterrupt:
-        # Only for debugging purposes
-        #db.execute("""DROP TABLE IF EXISTS keys;""")
+        #db.execute("""DROP TABLE IF EXISTS keys""") # Only for debugging purposes
         db.close()
         pass
 
+    webServer.server_close()
 
-
-webServer.server_close()
 
     
