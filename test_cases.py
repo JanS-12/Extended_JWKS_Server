@@ -36,15 +36,15 @@ class Test_JWKS_Server(unittest.TestCase):
         self.assertGreaterEqual(len(rows), 2, "There should be at least 2 keys") # Checking for 'OK'
     
     def test_get_auth_request(self):
-        response = requests.get(url="http://localhost:8080/auth")
+        response = requests.get(url="http://localhost:8080/auth", auth=("userABC", "password123"))
         self.assertEqual(response.status_code, 404)  # Checking for 'Method Not Allowed'
 
     def test_valid_auth_request(self):
-        response = requests.post(url="http://localhost:8080/auth")
+        response = requests.post(url="http://localhost:8080/auth", auth=("userABC", "password123"))
         self.assertEqual(response.status_code, 200)  # Checking for 'OK'
        
     def test_auth_expired_request(self):
-        response = requests.post(url="http://localhost:8080/auth?expired=true")   
+        response = requests.post(url="http://localhost:8080/auth?expired=true", auth=("userABC", "password123"))   
         self.assertTrue(response.status_code, 200)    # Checking for 'OK'    
 
     def test_not_supported_methods(self):
