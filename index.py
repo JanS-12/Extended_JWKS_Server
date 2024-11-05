@@ -106,7 +106,7 @@ class MyServer(BaseHTTPRequestHandler):
             row = get_key(exp)            
 
             if row:
-                key_pem = row[0]      # Index 0 is pem, Index 1 is exp
+                k_pem = row[0]      # Index 0 is pem, Index 1 is exp
                 headers = {"kid": "expiredKID" if exp else "goodKID"}
 
                 token_payload = {
@@ -114,7 +114,12 @@ class MyServer(BaseHTTPRequestHandler):
                     "exp": datetime.datetime.now(datetime.UTC) + (datetime.timedelta(hours=-2) if exp else datetime.timedelta(hours=2))
                 }
 
-                encoded_jwt = jwt.encode(token_payload, key_pem.encode(), algorithm = "RS256", headers = headers)
+                encoded_jwt = jwt.encode(
+                    token_payload, 
+                    k_pem.encode(), 
+                    algorithm = "RS256", 
+                    headers = headers)
+                
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(bytes(encoded_jwt, "utf-8"))
@@ -134,8 +139,8 @@ class MyServer(BaseHTTPRequestHandler):
             jwks = {"keys": []}  #Key Set
 
             if valid_key:
-                key_pem = valid_key[0]
-                key = serialization.load_pem_private_key(key_pem.encode(), password = None)
+                k_pem = valid_key[0]
+                key = serialization.load_pem_private_key(k_pem.encode(), password = None)
 
                 numbers = key.private_numbers()
                 
